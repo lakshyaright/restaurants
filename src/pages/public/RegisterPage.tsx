@@ -82,10 +82,12 @@ export const RegisterPage: React.FC = () => {
       }
 
       // 2. Register user via Supabase Auth
+      const redirectUrl = `${window.location.origin}/dashboard`;
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: email.trim(),
         password: password,
         options: {
+          emailRedirectTo: redirectUrl,
           data: {
             full_name: fullName.trim(),
           },
