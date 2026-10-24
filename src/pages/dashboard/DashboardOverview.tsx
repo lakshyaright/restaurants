@@ -15,7 +15,8 @@ import {
   ToggleRight,
   Loader2,
   AlertCircle,
-  ShoppingBag
+  ShoppingBag,
+  Bell
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -205,25 +206,25 @@ export const DashboardOverview: React.FC = () => {
 
       {/* Primary KPI Metrics Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Live Orders Card */}
+        {/* Live Orders & Waiter Calls Card */}
         <Link
           to="/dashboard/orders"
-          className="bg-white p-5 rounded-xl border-2 border-emerald-600/80 shadow-xs space-y-2 hover:bg-emerald-50/30 transition-colors block group"
+          className="bg-white p-5 rounded-xl border-2 border-amber-500 shadow-xs space-y-2 hover:bg-amber-50/30 transition-colors block group"
         >
           <div className="flex items-center justify-between text-stone-500">
-            <span className="text-xs font-semibold uppercase tracking-wider text-emerald-800">Live Kitchen Orders</span>
-            <ShoppingBag className="w-4 h-4 text-emerald-700" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-amber-900">Live Orders & Waiter Calls</span>
+            <Bell className="w-4 h-4 text-amber-600 animate-bounce" />
           </div>
           <div className="flex items-baseline justify-between">
             <div className="text-2xl font-bold text-stone-900 font-mono-nums">
-              View Feed →
+              Live Feed →
             </div>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-              Live Feed
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900">
+              Live Alerts
             </span>
           </div>
           <div className="text-[11px] text-stone-500">
-            Incoming table tickets & statuses
+            Food orders & table call notifications
           </div>
         </Link>
 

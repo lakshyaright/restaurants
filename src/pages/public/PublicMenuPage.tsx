@@ -20,12 +20,16 @@ import {
   ChefHat,
   Utensils,
   CheckCircle2,
-  Sparkles
+  Sparkles,
+  Bell,
+  BellRing,
+  Coffee,
+  Receipt
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured, formatCurrency } from '../../lib/supabase';
 import { DietaryBadge } from '../../components/common/DietaryBadge';
 import { DEMO_RESTAURANT, DEMO_CATEGORIES, DEMO_MENU_ITEMS } from '../../data/mockDemoData';
-import type { Restaurant, Category, MenuItem, DietaryType, Order, OrderStatus } from '../../types';
+import type { Restaurant, Category, MenuItem, DietaryType, Order, OrderStatus, WaiterCall, WaiterCallType } from '../../types';
 
 interface PublicMenuPageProps {
   previewMode?: boolean;
@@ -59,6 +63,22 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
+
+  // Waiter Call State
+  const [isCallWaiterOpen, setIsCallWaiterOpen] = useState(false);
+  const [waiterCallTable, setWaiterCallTable] = useState(urlTableParam ? `Table ${urlTableParam}` : '');
+  const [waiterCallType, setWaiterCallType] = useState<WaiterCallType>('take_order');
+  const [waiterCallNotes, setWaiterCallNotes] = useState('');
+  const [isSubmittingWaiterCall, setIsSubmittingWaiterCall] = useState(false);
+  const [waiterCallError, setWaiterCallError] = useState<string | null>(null);
+  const [activeWaiterCall, setActiveWaiterCall] = useState<WaiterCall | null>(() => {
+    try {
+      const saved = localStorage.getItem(`active_call_${slug || 'demo'}`);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
 
   useEffect(() => {
     if (forcedRestaurant) {
@@ -338,6 +358,122 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
     return () => clearInterval(interval);
   }, [placedOrder]);
 
+  // Handle Calling Waiter / Batter to Table
+  const handleCallWaiter = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!restaurant) return;
+
+    const finalTable = waiterCallTable.trim() || tableNumber.trim();
+    if (!finalTable) {
+      setWaiterCallError('Please enter your Table or Seat Number so staff knows where to come.');
+      return;
+    }
+
+    setIsSubmittingWaiterCall(true);
+    setWaiterCallError(null);
+
+    try {
+      if (supabase && isSupabaseConfigured) {
+        const { data, error } = await supabase
+          .from('waiter_calls')
+          .insert({
+            restaurant_id: restaurant.id,
+            table_number: finalTable,
+            request_type: waiterCallType,
+            notes: waiterCallNotes.trim() || null,
+            status: 'pending',
+          })
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Waiter call insert error:', error);
+        }
+
+        const callObj: WaiterCall = data || {
+          id: `local-${Date.now()}`,
+          restaurant_id: restaurant.id,
+          table_number: finalTable,
+          request_type: waiterCallType,
+          notes: waiterCallNotes.trim() || null,
+          status: 'pending',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        setActiveWaiterCall(callObj);
+        localStorage.setItem(`active_call_${slug || 'demo'}`, JSON.stringify(callObj));
+        setIsCallWaiterOpen(false);
+      } else {
+        const mockCall: WaiterCall = {
+          id: `demo-${Date.now()}`,
+          restaurant_id: restaurant.id,
+          table_number: finalTable,
+          request_type: waiterCallType,
+          notes: waiterCallNotes.trim() || null,
+          status: 'pending',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        setActiveWaiterCall(mockCall);
+        localStorage.setItem(`active_call_${slug || 'demo'}`, JSON.stringify(mockCall));
+        setIsCallWaiterOpen(false);
+      }
+    } catch (err: unknown) {
+      setWaiterCallError(err instanceof Error ? err.message : 'Failed to call staff');
+    } finally {
+      setIsSubmittingWaiterCall(false);
+    }
+  };
+
+  // Poll active waiter call status so diner sees when staff is attending / arrived
+  useEffect(() => {
+    if (!activeWaiterCall || !supabase || !isSupabaseConfigured) return;
+    if (activeWaiterCall.id.startsWith('demo-') || activeWaiterCall.id.startsWith('local-')) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('waiter_calls')
+          .select('*')
+          .eq('id', activeWaiterCall.id)
+          .maybeSingle();
+
+        if (data && !error) {
+          const updated = data as WaiterCall;
+          setActiveWaiterCall(updated);
+          localStorage.setItem(`active_call_${slug || 'demo'}`, JSON.stringify(updated));
+
+          if (updated.status === 'completed' || updated.status === 'dismissed') {
+            setTimeout(() => {
+              setActiveWaiterCall(null);
+              localStorage.removeItem(`active_call_${slug || 'demo'}`);
+            }, 6000);
+          }
+        }
+      } catch (e) {
+        console.error('Poll waiter call error:', e);
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [activeWaiterCall, slug]);
+
+  const handleCancelWaiterCall = async () => {
+    if (activeWaiterCall && supabase && isSupabaseConfigured && !activeWaiterCall.id.startsWith('demo-') && !activeWaiterCall.id.startsWith('local-')) {
+      try {
+        await supabase
+          .from('waiter_calls')
+          .update({ status: 'dismissed' })
+          .eq('id', activeWaiterCall.id);
+      } catch (e) {
+        console.error('Cancel waiter call error:', e);
+      }
+    }
+    setActiveWaiterCall(null);
+    localStorage.removeItem(`active_call_${slug || 'demo'}`);
+  };
+
   // Determine open/closed status based on schedule
   const isOpenNow = useMemo(() => {
     if (!restaurant?.opening_hours) return true;
@@ -518,16 +654,29 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 {urlTableParam && (
-                  <span className="px-2.5 py-1 rounded-md text-xs font-bold font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-400/40">
-                    TABLE #{urlTableParam}
+                  <span className="px-2 py-1 rounded-md text-[11px] font-bold font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-400/40">
+                    #{urlTableParam}
                   </span>
                 )}
+                
+                <button
+                  onClick={() => {
+                    if (!waiterCallTable && tableNumber) setWaiterCallTable(tableNumber);
+                    setIsCallWaiterOpen(true);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs flex items-center gap-1.5 shadow-xs transition-transform active:scale-95 cursor-pointer"
+                  title="Call waiter to table"
+                >
+                  <Bell className="w-3.5 h-3.5" />
+                  <span>Call Waiter</span>
+                </button>
+
                 <button
                   onClick={handleShare}
                   aria-label="Share menu link"
-                  className="p-2 rounded-lg bg-stone-800/80 hover:bg-stone-700 text-stone-200 border border-stone-700/60 shadow-xs transition-colors"
+                  className="p-1.5 rounded-lg bg-stone-800/80 hover:bg-stone-700 text-stone-200 border border-stone-700/60 shadow-xs transition-colors"
                 >
                   {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4" />}
                 </button>
@@ -600,6 +749,64 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
             </div>
             <p className="text-[11px] text-emerald-200 leading-tight">
               The kitchen staff has received your ticket. Relax while we prepare your fresh meal!
+            </p>
+          </div>
+        )}
+
+        {/* Live Waiter Call Status Banner */}
+        {activeWaiterCall && (
+          <div className="m-3 p-4 bg-amber-950 text-white rounded-2xl shadow-lg border border-amber-600 space-y-2 animate-in fade-in">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2">
+                <BellRing className="w-5 h-5 text-amber-400 animate-bounce" />
+                <span className="font-bold text-sm">
+                  {activeWaiterCall.status === 'completed'
+                    ? 'Staff Arrived at Your Table! ✅'
+                    : activeWaiterCall.status === 'attending'
+                    ? 'Waiter Is On The Way! 🏃'
+                    : 'Notification Sent to Waiter! 🔔'}
+                </span>
+              </div>
+              <button
+                onClick={handleCancelWaiterCall}
+                className="text-amber-300 hover:text-white p-1 text-xs font-semibold flex items-center gap-1"
+                title="Dismiss or cancel"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between text-xs pt-1 border-t border-amber-800">
+              <span className="font-mono font-bold text-amber-200">
+                {activeWaiterCall.table_number} ·{' '}
+                {activeWaiterCall.request_type === 'take_order'
+                  ? 'Take Order (ऑर्डर लेने आएं)'
+                  : activeWaiterCall.request_type === 'water'
+                  ? 'Water Bottle'
+                  : activeWaiterCall.request_type === 'bill'
+                  ? 'Bill Request'
+                  : 'Assistance'}
+              </span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
+                activeWaiterCall.status === 'completed'
+                  ? 'bg-emerald-800 text-emerald-200 border-emerald-600'
+                  : activeWaiterCall.status === 'attending'
+                  ? 'bg-blue-800 text-blue-200 border-blue-600'
+                  : 'bg-amber-800 text-amber-200 border-amber-500 animate-pulse'
+              }`}>
+                {activeWaiterCall.status === 'completed'
+                  ? 'Attended'
+                  : activeWaiterCall.status === 'attending'
+                  ? 'Attending'
+                  : 'Staff Alerted'}
+              </span>
+            </div>
+            <p className="text-[11px] text-amber-200/90 leading-tight">
+              {activeWaiterCall.status === 'completed'
+                ? 'A staff member attended to your table request.'
+                : activeWaiterCall.status === 'attending'
+                ? 'A waiter is walking to your table right now to assist you.'
+                : 'Staff has been notified. Someone will come to your table or counter shortly to take your order!'}
             </p>
           </div>
         )}
@@ -1021,6 +1228,187 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
             </div>
           </div>
         )}
+
+        {/* Floating Quick Call Waiter Button when cart is empty */}
+        {cartTotalQuantity === 0 && (
+          <div className="fixed bottom-5 right-4 z-40 animate-in fade-in">
+            <button
+              onClick={() => {
+                if (!waiterCallTable && tableNumber) setWaiterCallTable(tableNumber);
+                setIsCallWaiterOpen(true);
+              }}
+              className="py-2.5 px-4 rounded-full bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-xs shadow-xl flex items-center gap-2 border border-amber-300 transition-all active:scale-95 cursor-pointer"
+            >
+              <Bell className="w-4 h-4 animate-bounce text-stone-950" />
+              <span>Call Waiter / वेटर बुलाएं</span>
+            </button>
+          </div>
+        )}
+
+        {/* Call Waiter / Batter Notification Modal Sheet */}
+        {isCallWaiterOpen && (
+          <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
+            <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl max-w-md w-full border border-stone-200 max-h-[85vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom-4 duration-200">
+              {/* Header */}
+              <div className="p-4 border-b border-stone-100 flex items-center justify-between bg-amber-50">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-amber-500 text-stone-950 flex items-center justify-center font-bold">
+                    <Bell className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base text-stone-900 leading-tight">Call Waiter to Table</h3>
+                    <p className="text-[11px] text-stone-500">वेटर को आपके टेबल पर बुलाएं</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsCallWaiterOpen(false)}
+                  className="p-1 rounded-full text-stone-400 hover:text-stone-700 hover:bg-stone-200"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-4 overflow-y-auto space-y-4 flex-1">
+                {waiterCallError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{waiterCallError}</span>
+                  </div>
+                )}
+
+                <form id="call-waiter-form" onSubmit={handleCallWaiter} className="space-y-4 text-xs">
+                  {/* Table Number */}
+                  <div>
+                    <label className="block font-bold text-stone-900 mb-1">
+                      Table / Counter / Seat Number *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={waiterCallTable}
+                      onChange={(e) => setWaiterCallTable(e.target.value)}
+                      placeholder="e.g. Table 04, Counter 2, Seat B"
+                      className="w-full px-3 py-2.5 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium text-stone-900 bg-white"
+                    />
+                    <p className="text-[10px] text-stone-500 mt-1">
+                      Waiters and service staff will receive an instant notification for this table.
+                    </p>
+                  </div>
+
+                  {/* Reason for Calling Waiter */}
+                  <div>
+                    <label className="block font-bold text-stone-900 mb-1.5">
+                      What do you need assistance with?
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setWaiterCallType('take_order')}
+                        className={`p-3 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                          waiterCallType === 'take_order'
+                            ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-400/40 text-stone-950 font-bold'
+                            : 'bg-stone-50 border-stone-200 hover:bg-stone-100 text-stone-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <ChefHat className={`w-4 h-4 ${waiterCallType === 'take_order' ? 'text-amber-600' : 'text-stone-400'}`} />
+                          <span className="text-[9px] font-bold bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded">
+                            Popular
+                          </span>
+                        </div>
+                        <span className="text-xs">Take My Order</span>
+                        <span className="text-[10px] text-stone-500 font-normal">ऑर्डर लेने आएं</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setWaiterCallType('water')}
+                        className={`p-3 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                          waiterCallType === 'water'
+                            ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-400/40 text-stone-950 font-bold'
+                            : 'bg-stone-50 border-stone-200 hover:bg-stone-100 text-stone-700'
+                        }`}
+                      >
+                        <Coffee className={`w-4 h-4 ${waiterCallType === 'water' ? 'text-amber-600' : 'text-stone-400'}`} />
+                        <span className="text-xs">Water / Drinks</span>
+                        <span className="text-[10px] text-stone-500 font-normal">पानी चाहिए</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setWaiterCallType('bill')}
+                        className={`p-3 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                          waiterCallType === 'bill'
+                            ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-400/40 text-stone-950 font-bold'
+                            : 'bg-stone-50 border-stone-200 hover:bg-stone-100 text-stone-700'
+                        }`}
+                      >
+                        <Receipt className={`w-4 h-4 ${waiterCallType === 'bill' ? 'text-amber-600' : 'text-stone-400'}`} />
+                        <span className="text-xs">Bill / Payment</span>
+                        <span className="text-[10px] text-stone-500 font-normal">बिल चाहिए</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setWaiterCallType('help')}
+                        className={`p-3 rounded-xl border text-left flex flex-col gap-1 transition-all cursor-pointer ${
+                          waiterCallType === 'help'
+                            ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-400/40 text-stone-950 font-bold'
+                            : 'bg-stone-50 border-stone-200 hover:bg-stone-100 text-stone-700'
+                        }`}
+                      >
+                        <Utensils className={`w-4 h-4 ${waiterCallType === 'help' ? 'text-amber-600' : 'text-stone-400'}`} />
+                        <span className="text-xs">Assistance / Help</span>
+                        <span className="text-[10px] text-stone-500 font-normal">मदद चाहिए</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Optional Note */}
+                  <div>
+                    <label className="block font-semibold text-stone-900 mb-1">
+                      Quick Note for Staff (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={waiterCallNotes}
+                      onChange={(e) => setWaiterCallNotes(e.target.value)}
+                      placeholder="e.g. Ready to order, please bring cutlery..."
+                      className="w-full px-3 py-2 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+                </form>
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-stone-200 bg-stone-50 space-y-2">
+                <button
+                  type="submit"
+                  form="call-waiter-form"
+                  disabled={isSubmittingWaiterCall}
+                  className="w-full py-3 px-4 rounded-xl font-bold text-xs text-stone-950 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 transition-colors shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {isSubmittingWaiterCall ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Notifying Waiter & Staff...</span>
+                    </>
+                  ) : (
+                    <>
+                      <BellRing className="w-4 h-4" />
+                      <span>Send Notification to Waiter (वेटर को बुलाएं)</span>
+                    </>
+                  )}
+                </button>
+                <p className="text-[10px] text-stone-400 text-center">
+                  Staff dashboard will be alerted immediately with a chime sound.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
 
         {/* Discreet bottom footer */}
         <footer className="mt-auto p-4 bg-stone-100 border-t border-stone-200 text-center text-[11px] text-stone-500 space-y-1">

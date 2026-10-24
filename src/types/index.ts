@@ -121,3 +121,18 @@ export interface Order {
   created_at: string;
   updated_at: string;
 }
+
+export type WaiterCallType = 'take_order' | 'water' | 'bill' | 'help';
+export type WaiterCallStatus = 'pending' | 'attending' | 'completed' | 'dismissed';
+
+export interface WaiterCall {
+  id: string;
+  restaurant_id: string;
+  table_number: string;
+  request_type: WaiterCallType;
+  notes?: string | null;
+  status: WaiterCallStatus;
+  created_at: string;
+  updated_at: string;
+}
+

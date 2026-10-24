@@ -89,7 +89,7 @@ export const DashboardLayout: React.FC = () => {
 
   const navItems = [
     { name: 'Overview', to: '/dashboard', icon: LayoutDashboard, end: true },
-    { name: 'Live Orders', to: '/dashboard/orders', icon: ShoppingBag },
+    { name: 'Live Orders & Calls', to: '/dashboard/orders', icon: ShoppingBag },
     { name: 'Restaurant Profile', to: '/dashboard/restaurant', icon: Store },
     { name: 'Menu Categories', to: '/dashboard/categories', icon: Layers },
     { name: 'Food & Menu Items', to: '/dashboard/menu-items', icon: UtensilsCrossed },
