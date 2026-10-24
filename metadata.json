@@ -1,0 +1,6 @@
+{
+  "name": "TechRescue Digital Menu",
+  "description": "Production-grade multi-tenant QR Digital Menu SaaS platform for restaurants and cafes by TechRescue.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
