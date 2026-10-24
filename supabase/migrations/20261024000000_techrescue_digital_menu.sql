@@ -113,15 +113,15 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- 10. Helper Security Functions (Avoid recursive RLS policies)
-CREATE OR REPLACE FUNCTION public.is_admin(user_id UUID DEFAULT auth.uid())
+-- 10. Helper Security Functions (Avoid recursive RLS policies and ambiguous column references)
+CREATE OR REPLACE FUNCTION public.is_admin(target_user_id UUID DEFAULT auth.uid())
 RETURNS BOOLEAN AS $$
 BEGIN
-  IF user_id IS NULL THEN
+  IF target_user_id IS NULL THEN
     RETURN FALSE;
   END IF;
   RETURN EXISTS (
-    SELECT 1 FROM public.platform_admins WHERE platform_admins.user_id = user_id
+    SELECT 1 FROM public.platform_admins pa WHERE pa.user_id = target_user_id
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
@@ -134,16 +134,16 @@ BEGIN
   END IF;
   IF req_role IS NULL THEN
     RETURN EXISTS (
-      SELECT 1 FROM public.restaurant_members
-      WHERE restaurant_id = check_restaurant_id
-        AND user_id = auth.uid()
+      SELECT 1 FROM public.restaurant_members rm
+      WHERE rm.restaurant_id = check_restaurant_id
+        AND rm.user_id = auth.uid()
     );
   ELSE
     RETURN EXISTS (
-      SELECT 1 FROM public.restaurant_members
-      WHERE restaurant_id = check_restaurant_id
-        AND user_id = auth.uid()
-        AND role = req_role
+      SELECT 1 FROM public.restaurant_members rm
+      WHERE rm.restaurant_id = check_restaurant_id
+        AND rm.user_id = auth.uid()
+        AND rm.role = req_role
     );
   END IF;
 END;
@@ -160,15 +160,18 @@ ALTER TABLE public.menu_items ENABLE ROW LEVEL SECURITY;
 -- -------------------------------------------------------------------
 -- RLS POLICIES: PROFILES
 -- -------------------------------------------------------------------
+DROP POLICY IF EXISTS "Users can view their own profile or platform admins can view all" ON public.profiles;
 CREATE POLICY "Users can view their own profile or platform admins can view all"
   ON public.profiles FOR SELECT
   USING (id = auth.uid() OR public.is_admin());
 
+DROP POLICY IF EXISTS "Users can update their own profile" ON public.profiles;
 CREATE POLICY "Users can update their own profile"
   ON public.profiles FOR UPDATE
   USING (id = auth.uid())
   WITH CHECK (id = auth.uid());
 
+DROP POLICY IF EXISTS "Users can insert their own profile" ON public.profiles;
 CREATE POLICY "Users can insert their own profile"
   ON public.profiles FOR INSERT
   WITH CHECK (id = auth.uid());
@@ -176,54 +179,61 @@ CREATE POLICY "Users can insert their own profile"
 -- -------------------------------------------------------------------
 -- RLS POLICIES: PLATFORM ADMINS
 -- -------------------------------------------------------------------
+DROP POLICY IF EXISTS "Admins can view admin list" ON public.platform_admins;
 CREATE POLICY "Admins can view admin list"
   ON public.platform_admins FOR SELECT
-  USING (public.is_admin() OR user_id = auth.uid());
+  USING (platform_admins.user_id = auth.uid() OR public.is_admin());
 
 -- -------------------------------------------------------------------
 -- RLS POLICIES: RESTAURANTS
 -- -------------------------------------------------------------------
 -- Public can view ONLY published restaurants
+DROP POLICY IF EXISTS "Public can view published restaurants" ON public.restaurants;
 CREATE POLICY "Public can view published restaurants"
   ON public.restaurants FOR SELECT
   USING (status = 'published');
 
--- Authorized members or platform admins can view their restaurants even if draft
+-- Authorized members, creators, or platform admins can view their restaurants even if draft
+DROP POLICY IF EXISTS "Members and admins can view their restaurants" ON public.restaurants;
 CREATE POLICY "Members and admins can view their restaurants"
   ON public.restaurants FOR SELECT
-  USING (public.is_restaurant_member(id) OR public.is_admin());
+  USING (created_by = auth.uid() OR public.is_restaurant_member(id) OR public.is_admin());
 
 -- Authenticated users can create restaurants
+DROP POLICY IF EXISTS "Authenticated users can create restaurants" ON public.restaurants;
 CREATE POLICY "Authenticated users can create restaurants"
   ON public.restaurants FOR INSERT
   TO authenticated
   WITH CHECK (created_by = auth.uid());
 
--- Restaurant owners or platform admins can update
+-- Restaurant owners, creators, or platform admins can update
+DROP POLICY IF EXISTS "Owners and admins can update restaurant" ON public.restaurants;
 CREATE POLICY "Owners and admins can update restaurant"
   ON public.restaurants FOR UPDATE
-  USING (public.is_restaurant_member(id, 'owner') OR public.is_admin())
-  WITH CHECK (public.is_restaurant_member(id, 'owner') OR public.is_admin());
+  USING (created_by = auth.uid() OR public.is_restaurant_member(id, 'owner') OR public.is_admin())
+  WITH CHECK (created_by = auth.uid() OR public.is_restaurant_member(id, 'owner') OR public.is_admin());
 
 -- Restaurant owners or platform admins can delete
+DROP POLICY IF EXISTS "Owners and admins can delete restaurant" ON public.restaurants;
 CREATE POLICY "Owners and admins can delete restaurant"
   ON public.restaurants FOR DELETE
-  USING (public.is_restaurant_member(id, 'owner') OR public.is_admin());
+  USING (created_by = auth.uid() OR public.is_restaurant_member(id, 'owner') OR public.is_admin());
 
 -- -------------------------------------------------------------------
 -- RLS POLICIES: RESTAURANT MEMBERS
 -- -------------------------------------------------------------------
+DROP POLICY IF EXISTS "Members can view membership" ON public.restaurant_members;
 CREATE POLICY "Members can view membership"
   ON public.restaurant_members FOR SELECT
-  USING (user_id = auth.uid() OR public.is_restaurant_member(restaurant_id) OR public.is_admin());
+  USING (restaurant_members.user_id = auth.uid() OR public.is_restaurant_member(restaurant_members.restaurant_id) OR public.is_admin());
 
+DROP POLICY IF EXISTS "Owners can add members" ON public.restaurant_members;
 CREATE POLICY "Owners can add members"
   ON public.restaurant_members FOR INSERT
   TO authenticated
   WITH CHECK (
-    -- Allow user creating their initial owner membership
-    user_id = auth.uid()
-    OR public.is_restaurant_member(restaurant_id, 'owner')
+    restaurant_members.user_id = auth.uid()
+    OR public.is_restaurant_member(restaurant_members.restaurant_id, 'owner')
     OR public.is_admin()
   );
 
