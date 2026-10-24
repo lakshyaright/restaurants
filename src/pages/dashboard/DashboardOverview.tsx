@@ -14,7 +14,8 @@ import {
   ToggleLeft, 
   ToggleRight,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  ShoppingBag
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -204,6 +205,28 @@ export const DashboardOverview: React.FC = () => {
 
       {/* Primary KPI Metrics Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Live Orders Card */}
+        <Link
+          to="/dashboard/orders"
+          className="bg-white p-5 rounded-xl border-2 border-emerald-600/80 shadow-xs space-y-2 hover:bg-emerald-50/30 transition-colors block group"
+        >
+          <div className="flex items-center justify-between text-stone-500">
+            <span className="text-xs font-semibold uppercase tracking-wider text-emerald-800">Live Kitchen Orders</span>
+            <ShoppingBag className="w-4 h-4 text-emerald-700" />
+          </div>
+          <div className="flex items-baseline justify-between">
+            <div className="text-2xl font-bold text-stone-900 font-mono-nums">
+              View Feed →
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+              Live Feed
+            </span>
+          </div>
+          <div className="text-[11px] text-stone-500">
+            Incoming table tickets & statuses
+          </div>
+        </Link>
+
         {/* Categories count */}
         <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-xs space-y-2">
           <div className="flex items-center justify-between text-stone-500">
@@ -228,21 +251,7 @@ export const DashboardOverview: React.FC = () => {
             {menuItems.length}
           </div>
           <div className="text-[11px] text-stone-500">
-            {menuItems.filter(i => i.is_featured).length} marked as chef specials
-          </div>
-        </div>
-
-        {/* Available Items */}
-        <div className="bg-white p-5 rounded-xl border border-stone-200 shadow-xs space-y-2">
-          <div className="flex items-center justify-between text-stone-500">
-            <span className="text-xs font-semibold uppercase tracking-wider">Available Now</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div className="text-2xl font-bold text-emerald-700 font-mono-nums">
-            {availableItemsCount}
-          </div>
-          <div className="text-[11px] text-stone-500">
-            Ready to be ordered by diners
+            {availableItemsCount} in-stock dishes
           </div>
         </div>
 

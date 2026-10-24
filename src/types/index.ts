@@ -94,3 +94,30 @@ export interface AdminStats {
   totalCategories: number;
   totalMenuItems: number;
 }
+
+export type OrderStatus = 'pending' | 'preparing' | 'served' | 'completed' | 'cancelled';
+
+export interface OrderItem {
+  id?: string;
+  order_id?: string;
+  menu_item_id: string;
+  item_name: string;
+  quantity: number;
+  price: number;
+  total_price: number;
+  notes?: string;
+}
+
+export interface Order {
+  id: string;
+  restaurant_id: string;
+  order_number: string;
+  table_number: string;
+  customer_name?: string | null;
+  notes?: string | null;
+  total_amount: number;
+  status: OrderStatus;
+  items?: OrderItem[];
+  created_at: string;
+  updated_at: string;
+}

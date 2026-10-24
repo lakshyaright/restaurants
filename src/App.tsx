@@ -22,6 +22,7 @@ import { MenuItemsPage } from './pages/dashboard/MenuItemsPage';
 import { QRCodePage } from './pages/dashboard/QRCodePage';
 import { MenuPreviewPage } from './pages/dashboard/MenuPreviewPage';
 import { SettingsPage } from './pages/dashboard/SettingsPage';
+import { OrdersPage } from './pages/dashboard/OrdersPage';
 
 // Platform Administration Pages
 import { AdminLayout } from './pages/admin/AdminLayout';
@@ -47,6 +48,7 @@ export default function App() {
           {/* Protected Restaurant Owner Dashboard */}
           <Route path="/dashboard" element={<DashboardLayout />}>
             <Route index element={<DashboardOverview />} />
+            <Route path="orders" element={<OrdersPage />} />
             <Route path="restaurant" element={<RestaurantProfilePage />} />
             <Route path="categories" element={<CategoriesPage />} />
             <Route path="menu-items" element={<MenuItemsPage />} />

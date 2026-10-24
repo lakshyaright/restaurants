@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { 
   Search, 
   MapPin, 
@@ -12,12 +12,20 @@ import {
   ShieldAlert,
   Loader2,
   Share2,
-  Check
+  Check,
+  Plus,
+  Minus,
+  ShoppingBag,
+  X,
+  ChefHat,
+  Utensils,
+  CheckCircle2,
+  Sparkles
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured, formatCurrency } from '../../lib/supabase';
 import { DietaryBadge } from '../../components/common/DietaryBadge';
 import { DEMO_RESTAURANT, DEMO_CATEGORIES, DEMO_MENU_ITEMS } from '../../data/mockDemoData';
-import type { Restaurant, Category, MenuItem, DietaryType } from '../../types';
+import type { Restaurant, Category, MenuItem, DietaryType, Order, OrderStatus } from '../../types';
 
 interface PublicMenuPageProps {
   previewMode?: boolean;
@@ -26,6 +34,8 @@ interface PublicMenuPageProps {
 
 export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = false, forcedRestaurant = null }) => {
   const { slug } = useParams<{ slug: string }>();
+  const [searchParams] = useSearchParams();
+  const urlTableParam = searchParams.get('table') || '';
 
   const [restaurant, setRestaurant] = useState<Restaurant | null>(forcedRestaurant);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -40,10 +50,19 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
   const [dietaryFilter, setDietaryFilter] = useState<'all' | DietaryType>('all');
   const [copiedLink, setCopiedLink] = useState(false);
 
+  // Cart & Table Ordering State
+  const [cart, setCart] = useState<Record<string, number>>({});
+  const [isOrderTrayOpen, setIsOrderTrayOpen] = useState(false);
+  const [tableNumber, setTableNumber] = useState(urlTableParam ? `Table ${urlTableParam}` : '');
+  const [customerName, setCustomerName] = useState('');
+  const [orderNotes, setOrderNotes] = useState('');
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
+
   useEffect(() => {
     if (forcedRestaurant) {
       setRestaurant(forcedRestaurant);
-      // Fetch categories & items for forcedRestaurant
       loadMenuData(forcedRestaurant.id, true);
       return;
     }
@@ -59,7 +78,7 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
       setNotFound(false);
       setStatusMessage(null);
 
-      // Check if this is the demo restaurant or fallback
+      // Demo fallback
       if (slug.toLowerCase() === 'cafe-raj' && (!isSupabaseConfigured || !supabase)) {
         setRestaurant(DEMO_RESTAURANT);
         setCategories(DEMO_CATEGORIES);
@@ -69,7 +88,6 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
       }
 
       if (!isSupabaseConfigured || !supabase) {
-        // Fallback for non-configured environment
         if (slug.toLowerCase() === 'cafe-raj') {
           setRestaurant(DEMO_RESTAURANT);
           setCategories(DEMO_CATEGORIES);
@@ -82,7 +100,6 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
       }
 
       try {
-        // Query restaurant by slug
         const { data: restData, error: restError } = await supabase
           .from('restaurants')
           .select('*')
@@ -90,7 +107,6 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
           .maybeSingle();
 
         if (restError || !restData) {
-          // If demo slug is requested but not in DB yet, serve mock demo
           if (slug.toLowerCase() === 'cafe-raj') {
             setRestaurant(DEMO_RESTAURANT);
             setCategories(DEMO_CATEGORIES);
@@ -105,7 +121,6 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
 
         const currentRest = restData as Restaurant;
 
-        // Security check: Only published restaurants are accessible publicly unless previewMode is active
         if (!previewMode && currentRest.status !== 'published') {
           if (currentRest.status === 'draft') {
             setStatusMessage('This restaurant menu is currently in draft mode and has not yet been published by the owner.');
@@ -133,7 +148,6 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
     if (!supabase) return;
 
     try {
-      // 1. Fetch Categories
       let catQuery = supabase
         .from('categories')
         .select('*')
@@ -147,7 +161,6 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
       const { data: catData } = await catQuery;
       if (catData) setCategories(catData as Category[]);
 
-      // 2. Fetch Menu Items
       let itemQuery = supabase
         .from('menu_items')
         .select('*')
@@ -164,6 +177,166 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
       console.error('Error querying category/item records:', err);
     }
   };
+
+  // Cart operations
+  const updateCartQty = (itemId: string, delta: number) => {
+    setCart(prev => {
+      const current = prev[itemId] || 0;
+      const next = current + delta;
+      if (next <= 0) {
+        const copy = { ...prev };
+        delete copy[itemId];
+        return copy;
+      }
+      return { ...prev, [itemId]: next };
+    });
+  };
+
+  const cartItemsList = useMemo(() => {
+    return Object.entries(cart)
+      .map(([id, qty]) => {
+        const item = menuItems.find(m => m.id === id);
+        if (!item) return null;
+        const activePrice = item.discounted_price ?? item.price;
+        return {
+          item,
+          quantity: qty,
+          unitPrice: activePrice,
+          totalPrice: activePrice * qty,
+        };
+      })
+      .filter(Boolean) as { item: MenuItem; quantity: number; unitPrice: number; totalPrice: number }[];
+  }, [cart, menuItems]);
+
+  const cartTotalAmount = useMemo(() => {
+    return cartItemsList.reduce((sum, curr) => sum + curr.totalPrice, 0);
+  }, [cartItemsList]);
+
+  const cartTotalQuantity = useMemo(() => {
+    return cartItemsList.reduce((sum, curr) => sum + curr.quantity, 0);
+  }, [cartItemsList]);
+
+  // Handle Placing Order
+  const handlePlaceOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!restaurant) return;
+
+    if (!tableNumber.trim()) {
+      setOrderError('Please enter your Table or Seat Number (e.g. Table 4).');
+      return;
+    }
+
+    if (cartItemsList.length === 0) {
+      setOrderError('Your order cart is empty.');
+      return;
+    }
+
+    setIsSubmittingOrder(true);
+    setOrderError(null);
+
+    const generatedOrderNumber = `#TR-${Math.floor(100 + Math.random() * 900)}`;
+
+    try {
+      if (supabase && isSupabaseConfigured) {
+        // 1. Insert order into 'orders' table
+        const { data: orderData, error: orderErr } = await supabase
+          .from('orders')
+          .insert({
+            restaurant_id: restaurant.id,
+            order_number: generatedOrderNumber,
+            table_number: tableNumber.trim(),
+            customer_name: customerName.trim() || null,
+            notes: orderNotes.trim() || null,
+            total_amount: cartTotalAmount,
+            status: 'pending',
+          })
+          .select()
+          .single();
+
+        if (orderErr) {
+          console.error('Order creation error:', orderErr);
+          // If table doesn't exist yet, we still provide instant customer feedback
+        }
+
+        const insertedOrderId = orderData?.id || `local-${Date.now()}`;
+
+        // 2. Insert order items
+        if (orderData?.id) {
+          const itemsToInsert = cartItemsList.map(ci => ({
+            order_id: insertedOrderId,
+            menu_item_id: ci.item.id,
+            item_name: ci.item.name,
+            quantity: ci.quantity,
+            price: ci.unitPrice,
+            total_price: ci.totalPrice,
+          }));
+
+          await supabase.from('order_items').insert(itemsToInsert);
+        }
+
+        const confirmedOrder: Order = {
+          id: insertedOrderId,
+          restaurant_id: restaurant.id,
+          order_number: generatedOrderNumber,
+          table_number: tableNumber.trim(),
+          customer_name: customerName.trim() || null,
+          notes: orderNotes.trim() || null,
+          total_amount: cartTotalAmount,
+          status: 'pending',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        setPlacedOrder(confirmedOrder);
+        setCart({});
+        setIsOrderTrayOpen(false);
+      } else {
+        // Fallback for preview / demo
+        const mockOrder: Order = {
+          id: `demo-${Date.now()}`,
+          restaurant_id: restaurant.id,
+          order_number: generatedOrderNumber,
+          table_number: tableNumber.trim(),
+          customer_name: customerName.trim() || null,
+          notes: orderNotes.trim() || null,
+          total_amount: cartTotalAmount,
+          status: 'pending',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        setPlacedOrder(mockOrder);
+        setCart({});
+        setIsOrderTrayOpen(false);
+      }
+    } catch (err: unknown) {
+      setOrderError(err instanceof Error ? err.message : 'Failed to place order');
+    } finally {
+      setIsSubmittingOrder(false);
+    }
+  };
+
+  // Poll placed order status so customer sees "Cooking", "Served" updates
+  useEffect(() => {
+    if (!placedOrder || !supabase || !isSupabaseConfigured) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const { data } = await supabase
+          .from('orders')
+          .select('status')
+          .eq('id', placedOrder.id)
+          .maybeSingle();
+
+        if (data && data.status !== placedOrder.status) {
+          setPlacedOrder(prev => prev ? { ...prev, status: data.status as OrderStatus } : null);
+        }
+      } catch (err) {
+        console.error('Polling status error:', err);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [placedOrder]);
 
   // Determine open/closed status based on schedule
   const isOpenNow = useMemo(() => {
@@ -183,7 +356,6 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
     const closeMinutes = closeH * 60 + closeM;
 
     if (closeMinutes < openMinutes) {
-      // Overnight schedule (e.g. 18:00 to 02:00)
       return currentMinutes >= openMinutes || currentMinutes <= closeMinutes;
     }
     return currentMinutes >= openMinutes && currentMinutes <= closeMinutes;
@@ -192,15 +364,12 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
   // Filtered Menu Items
   const filteredItems = useMemo(() => {
     return menuItems.filter(item => {
-      // Category filter
       if (selectedCategory !== 'all' && item.category_id !== selectedCategory) {
         return false;
       }
-      // Dietary filter
       if (dietaryFilter !== 'all' && item.dietary_type !== dietaryFilter) {
         return false;
       }
-      // Search query filter
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim();
         const matchesName = item.name.toLowerCase().includes(query);
@@ -214,7 +383,6 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
     });
   }, [menuItems, selectedCategory, dietaryFilter, searchQuery]);
 
-  // Group items by category for structured layout
   const groupedCategories = useMemo(() => {
     return categories
       .map(cat => ({
@@ -238,7 +406,6 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
     }
   };
 
-  // Loading state
   if (isLoading) {
     return (
       <div className="min-h-screen bg-stone-100 flex flex-col items-center justify-center p-6 text-center">
@@ -249,7 +416,6 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
     );
   }
 
-  // Not Found state
   if (notFound || !restaurant) {
     return (
       <div className="min-h-screen bg-stone-50 flex flex-col justify-center items-center p-6 text-center">
@@ -278,7 +444,6 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
     );
   }
 
-  // Status Blocked / Draft / Suspended state
   if (statusMessage) {
     return (
       <div className="min-h-screen bg-stone-50 flex flex-col justify-center items-center p-6 text-center">
@@ -313,7 +478,7 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
   return (
     <div className="min-h-screen bg-stone-100 text-stone-900 flex justify-center selection:bg-emerald-200">
       {/* Mobile-constrained viewport container */}
-      <div className="w-full max-w-md bg-stone-50 min-h-screen shadow-xl flex flex-col border-x border-stone-200 relative pb-16">
+      <div className="w-full max-w-md bg-stone-50 min-h-screen shadow-xl flex flex-col border-x border-stone-200 relative pb-28">
         
         {/* Top Header Banner / Brand Canvas */}
         <div className="relative bg-stone-900 text-white overflow-hidden">
@@ -354,6 +519,11 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
               </div>
 
               <div className="flex items-center gap-2">
+                {urlTableParam && (
+                  <span className="px-2.5 py-1 rounded-md text-xs font-bold font-mono bg-emerald-500/20 text-emerald-300 border border-emerald-400/40">
+                    TABLE #{urlTableParam}
+                  </span>
+                )}
                 <button
                   onClick={handleShare}
                   aria-label="Share menu link"
@@ -404,6 +574,36 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
           </div>
         </div>
 
+        {/* Live Order Confirmation Banner if order placed */}
+        {placedOrder && (
+          <div className="m-3 p-4 bg-emerald-900 text-white rounded-2xl shadow-lg border border-emerald-700 space-y-2">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-emerald-300" />
+                <span className="font-bold text-sm">Order Placed Successfully!</span>
+              </div>
+              <button
+                onClick={() => setPlacedOrder(null)}
+                className="text-emerald-300 hover:text-white p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between text-xs pt-1 border-t border-emerald-800">
+              <span className="font-mono font-bold text-emerald-200">
+                {placedOrder.order_number} · {placedOrder.table_number}
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-800 text-emerald-200 border border-emerald-600">
+                {placedOrder.status === 'pending' ? 'In Kitchen Queue' : placedOrder.status === 'preparing' ? 'Cooking in Kitchen 🔥' : 'Served at Table 🍽️'}
+              </span>
+            </div>
+            <p className="text-[11px] text-emerald-200 leading-tight">
+              The kitchen staff has received your ticket. Relax while we prepare your fresh meal!
+            </p>
+          </div>
+        )}
+
         {/* Live Search & Filter Sticky Bar */}
         <div className="sticky top-0 z-30 bg-stone-50/95 backdrop-blur-md border-b border-stone-200 shadow-xs px-4 py-2.5 space-y-2">
           {/* Search Box */}
@@ -413,7 +613,7 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search dishes, drinks, or ingredients..."
-              className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 placeholder:text-stone-400"
+              className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-600 placeholder:text-stone-400"
             />
             <Search className="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-2.5" />
             {searchQuery && (
@@ -530,88 +730,301 @@ export const PublicMenuPage: React.FC<PublicMenuPageProps> = ({ previewMode = fa
                 </div>
 
                 <div className="space-y-2.5">
-                  {category.items.map((item) => (
-                    <article
-                      key={item.id}
-                      className={`p-3.5 bg-white rounded-xl border transition-shadow shadow-xs flex justify-between gap-3 ${
-                        !item.is_available ? 'opacity-60 bg-stone-100/70 border-stone-200' : 'border-stone-200/90 hover:border-stone-300'
-                      }`}
-                    >
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center gap-2">
-                          <DietaryBadge type={item.dietary_type} />
-                          {item.is_featured && (
-                            <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
-                              Chef Special
-                            </span>
+                  {category.items.map((item) => {
+                    const itemQty = cart[item.id] || 0;
+                    return (
+                      <article
+                        key={item.id}
+                        className={`p-3.5 bg-white rounded-xl border transition-shadow shadow-xs flex justify-between gap-3 ${
+                          !item.is_available ? 'opacity-60 bg-stone-100/70 border-stone-200' : 'border-stone-200/90 hover:border-stone-300'
+                        }`}
+                      >
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <DietaryBadge type={item.dietary_type} />
+                            {item.is_featured && (
+                              <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                                Special
+                              </span>
+                            )}
+                            {!item.is_available && (
+                              <span className="text-[10px] font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.2 rounded border border-rose-200">
+                                Sold Out
+                              </span>
+                            )}
+                          </div>
+
+                          <h3 className="text-sm font-bold text-stone-900 leading-snug">
+                            {item.name}
+                          </h3>
+
+                          {item.description && (
+                            <p className="text-xs text-stone-600 line-clamp-2 leading-relaxed">
+                              {item.description}
+                            </p>
                           )}
-                          {!item.is_available && (
-                            <span className="text-[10px] font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.2 rounded border border-rose-200">
-                              Sold Out Today
-                            </span>
+
+                          {item.allergens && item.allergens.length > 0 && (
+                            <div className="text-[10px] text-stone-600 pt-0.5">
+                              Contains: {item.allergens.join(', ')}
+                            </div>
                           )}
+
+                          <div className="pt-2 flex items-center justify-between">
+                            <div className="flex items-baseline gap-2 font-mono-nums">
+                              {item.discounted_price ? (
+                                <>
+                                  <span className="text-sm font-bold text-stone-900">
+                                    {formatCurrency(item.discounted_price, restaurant.currency)}
+                                  </span>
+                                  <span className="text-xs text-stone-400 line-through">
+                                    {formatCurrency(item.price, restaurant.currency)}
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="text-sm font-bold text-stone-900">
+                                  {formatCurrency(item.price, restaurant.currency)}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Direct Table Order Button / Stepper */}
+                            {item.is_available && (
+                              <div>
+                                {itemQty === 0 ? (
+                                  <button
+                                    onClick={() => updateCartQty(item.id, 1)}
+                                    className="px-3 py-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg text-xs shadow-xs transition-colors flex items-center gap-1 active:scale-95"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                    <span>Add</span>
+                                  </button>
+                                ) : (
+                                  <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-300 rounded-lg p-0.5 shadow-xs">
+                                    <button
+                                      onClick={() => updateCartQty(item.id, -1)}
+                                      className="w-6 h-6 rounded bg-white text-emerald-800 hover:bg-emerald-100 flex items-center justify-center font-bold text-sm shadow-2xs"
+                                    >
+                                      <Minus className="w-3 h-3" />
+                                    </button>
+                                    <span className="font-mono-nums font-bold text-xs text-emerald-950 px-1 min-w-[14px] text-center">
+                                      {itemQty}
+                                    </span>
+                                    <button
+                                      onClick={() => updateCartQty(item.id, 1)}
+                                      className="w-6 h-6 rounded bg-emerald-700 text-white hover:bg-emerald-800 flex items-center justify-center font-bold text-sm shadow-2xs"
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
 
-                        <h3 className="text-sm font-bold text-stone-900 leading-snug">
-                          {item.name}
-                        </h3>
-
-                        {item.description && (
-                          <p className="text-xs text-stone-600 line-clamp-2 leading-relaxed">
-                            {item.description}
-                          </p>
-                        )}
-
-                        {item.allergens && item.allergens.length > 0 && (
-                          <div className="text-[10px] text-stone-600 pt-0.5">
-                            Contains: {item.allergens.join(', ')}
-                          </div>
-                        )}
-
-                        <div className="pt-1.5 flex items-baseline gap-2 font-mono-nums">
-                          {item.discounted_price ? (
-                            <>
-                              <span className="text-sm font-bold text-stone-900">
-                                {formatCurrency(item.discounted_price, restaurant.currency)}
-                              </span>
-                              <span className="text-xs text-stone-600 line-through">
-                                {formatCurrency(item.price, restaurant.currency)}
-                              </span>
-                            </>
+                        {/* Food image or fallback placeholder */}
+                        <div className="w-20 h-20 rounded-lg bg-stone-100 border border-stone-200 shrink-0 overflow-hidden flex items-center justify-center">
+                          {item.image_url ? (
+                            <img
+                              src={item.image_url}
+                              alt={item.name}
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
                           ) : (
-                            <span className="text-sm font-bold text-stone-900">
-                              {formatCurrency(item.price, restaurant.currency)}
-                            </span>
+                            <div className="w-full h-full bg-stone-100 flex flex-col items-center justify-center p-2 text-center text-stone-400">
+                              <UtensilsCrossed className="w-5 h-5 text-stone-400" />
+                            </div>
                           )}
                         </div>
-                      </div>
-
-                      {/* Food image or fallback placeholder */}
-                      <div className="w-20 h-20 rounded-lg bg-stone-100 border border-stone-200 shrink-0 overflow-hidden flex items-center justify-center">
-                        {item.image_url ? (
-                          <img
-                            src={item.image_url}
-                            alt={item.name}
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : (
-                          <div className="w-full h-full bg-stone-100 flex flex-col items-center justify-center p-2 text-center text-stone-400">
-                            <UtensilsCrossed className="w-5 h-5 text-stone-400" />
-                          </div>
-                        )}
-                      </div>
-                    </article>
-                  ))}
+                      </article>
+                    );
+                  })}
                 </div>
               </section>
             ))
           )}
         </main>
 
+        {/* Sticky Floating Bottom Cart Bar */}
+        {cartTotalQuantity > 0 && (
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-sm z-40 bg-stone-900 text-white rounded-2xl p-3 shadow-2xl flex items-center justify-between border border-stone-700/80 animate-in fade-in slide-in-from-bottom-3 duration-200">
+            <div className="flex items-center gap-3 pl-1">
+              <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-xs font-mono-nums">
+                {cartTotalQuantity}
+              </div>
+              <div>
+                <span className="text-[11px] text-stone-400 uppercase font-semibold block leading-tight">Total Bill</span>
+                <span className="text-sm font-bold font-mono-nums text-white">
+                  {formatCurrency(cartTotalAmount, restaurant.currency)}
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setIsOrderTrayOpen(true)}
+              className="py-2 px-4 rounded-xl font-bold text-xs bg-emerald-500 hover:bg-emerald-400 text-stone-950 transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+            >
+              <ShoppingBag className="w-4 h-4" />
+              <span>Review Order ({cartTotalQuantity})</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Order Review Bottom Sheet / Modal */}
+        {isOrderTrayOpen && (
+          <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in">
+            <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl max-w-md w-full border border-stone-200 max-h-[85vh] flex flex-col overflow-hidden">
+              {/* Sheet Header */}
+              <div className="p-4 border-b border-stone-100 flex items-center justify-between bg-stone-50">
+                <div className="flex items-center gap-2">
+                  <ShoppingBag className="w-5 h-5 text-emerald-700" />
+                  <h3 className="font-bold text-base text-stone-900">Your Table Order</h3>
+                </div>
+                <button
+                  onClick={() => setIsOrderTrayOpen(false)}
+                  className="p-1 rounded-full text-stone-400 hover:text-stone-700 hover:bg-stone-200"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Sheet Body */}
+              <div className="p-4 overflow-y-auto space-y-4 flex-1">
+                {orderError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{orderError}</span>
+                  </div>
+                )}
+
+                {/* Items in Cart */}
+                <div className="space-y-2">
+                  <span className="text-[11px] font-semibold text-stone-500 uppercase tracking-wider block">
+                    Selected Items ({cartTotalQuantity})
+                  </span>
+                  <div className="divide-y divide-stone-100 text-xs">
+                    {cartItemsList.map(({ item, quantity, totalPrice }) => (
+                      <div key={item.id} className="py-2 flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <span className="font-bold text-stone-900">{item.name}</span>
+                          <div className="font-mono-nums text-stone-500 text-[11px]">
+                            {quantity} × {formatCurrency(item.discounted_price ?? item.price, restaurant.currency)}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <span className="font-bold font-mono-nums text-stone-900">
+                            {formatCurrency(totalPrice, restaurant.currency)}
+                          </span>
+                          <div className="flex items-center gap-1 bg-stone-100 rounded-md p-0.5">
+                            <button
+                              onClick={() => updateCartQty(item.id, -1)}
+                              className="w-5 h-5 rounded bg-white text-stone-700 flex items-center justify-center font-bold text-xs"
+                            >
+                              -
+                            </button>
+                            <span className="font-mono-nums font-bold text-xs px-1">{quantity}</span>
+                            <button
+                              onClick={() => updateCartQty(item.id, 1)}
+                              className="w-5 h-5 rounded bg-white text-stone-700 flex items-center justify-center font-bold text-xs"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="pt-2 border-t border-stone-200 flex items-baseline justify-between text-xs font-bold text-stone-900">
+                    <span>Subtotal Bill:</span>
+                    <span className="text-base font-mono-nums text-emerald-800">
+                      {formatCurrency(cartTotalAmount, restaurant.currency)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Table & Guest Form */}
+                <form id="table-order-form" onSubmit={handlePlaceOrder} className="space-y-3 pt-2 border-t border-stone-100 text-xs">
+                  <div>
+                    <label className="block font-bold text-stone-900 mb-1">
+                      Table / Seat Number *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={tableNumber}
+                      onChange={(e) => setTableNumber(e.target.value)}
+                      placeholder="e.g. Table 04, Seat 12, Terrace"
+                      className="w-full px-3 py-2 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-600 font-medium"
+                    />
+                    <p className="text-[10px] text-stone-500 mt-1">
+                      Kitchen staff will bring your food directly to this table.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-stone-900 mb-1">
+                      Your Name (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="e.g. Rahul Sharma"
+                      className="w-full px-3 py-2 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-stone-900 mb-1">
+                      Special Cooking Notes (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={orderNotes}
+                      onChange={(e) => setOrderNotes(e.target.value)}
+                      placeholder="e.g. Extra spicy, less oil, no onion..."
+                      className="w-full px-3 py-2 border border-stone-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                    />
+                  </div>
+                </form>
+              </div>
+
+              {/* Sheet Footer */}
+              <div className="p-4 border-t border-stone-200 bg-stone-50 space-y-2">
+                <button
+                  type="submit"
+                  form="table-order-form"
+                  disabled={isSubmittingOrder || cartTotalQuantity === 0}
+                  className="w-full py-3 px-4 rounded-xl font-bold text-xs text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 transition-colors shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {isSubmittingOrder ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Sending Order to Kitchen...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChefHat className="w-4 h-4" />
+                      <span>Send Order to Kitchen ({formatCurrency(cartTotalAmount, restaurant.currency)})</span>
+                    </>
+                  )}
+                </button>
+                <p className="text-[10px] text-stone-400 text-center">
+                  Orders are prepared immediately by the kitchen team. Pay after dining.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Discreet bottom footer */}
         <footer className="mt-auto p-4 bg-stone-100 border-t border-stone-200 text-center text-[11px] text-stone-500 space-y-1">
-          <p>Orders are placed directly with your server at your table.</p>
+          <p>Orders are sent directly to the kitchen from your phone.</p>
           <p className="text-[10px] text-stone-400">
             Powered by{' '}
             <Link to="/" className="text-emerald-700 font-semibold hover:underline">

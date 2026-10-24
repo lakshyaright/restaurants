@@ -15,7 +15,8 @@ import {
   ShieldAlert,
   PlusCircle,
   Shield,
-  Loader2
+  Loader2,
+  ShoppingBag
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { SetupNoticeModal } from '../../components/common/SetupNoticeModal';
@@ -88,6 +89,7 @@ export const DashboardLayout: React.FC = () => {
 
   const navItems = [
     { name: 'Overview', to: '/dashboard', icon: LayoutDashboard, end: true },
+    { name: 'Live Orders', to: '/dashboard/orders', icon: ShoppingBag },
     { name: 'Restaurant Profile', to: '/dashboard/restaurant', icon: Store },
     { name: 'Menu Categories', to: '/dashboard/categories', icon: Layers },
     { name: 'Food & Menu Items', to: '/dashboard/menu-items', icon: UtensilsCrossed },
